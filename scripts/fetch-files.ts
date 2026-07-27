@@ -50,6 +50,7 @@ export function parseFileSpec(spec: string): DownloadEntry[] {
       throw new Error(`Invalid JSON array: ${errorMessage(error)}`);
     }
     if (!Array.isArray(parsed)) throw new Error("File specification JSON must be an array");
+    if (parsed.length === 0) throw new Error("No download entries were provided");
     return parsed.map((value, index) => normalizeJsonEntry(value, index + 1));
   }
 
@@ -138,7 +139,10 @@ export function sanitizeArtifactName(input: string): string {
 
 export function deriveFilename(url: string, contentDisposition: string | null, index: number): string {
   const fromHeader = filenameFromContentDisposition(contentDisposition);
-  if (fromHeader) return sanitizeRelativePath(sanitizePathSegment(fromHeader));
+  if (fromHeader) {
+    const headerBasename = basename(fromHeader.replaceAll("\\", "/"));
+    return sanitizeRelativePath(sanitizePathSegment(headerBasename));
+  }
 
   const parsed = new URL(url);
   const candidate = decodeURIComponentSafe(basename(parsed.pathname));
@@ -249,6 +253,7 @@ async function fetchWithRedirects(urlValue: string, config: Config, signal: Abor
     const location = response.headers.get("location");
     if (!location) throw new Error(`HTTP ${response.status} redirect did not include a Location header`);
     if (redirect === MAX_REDIRECTS) throw new Error(`Exceeded ${MAX_REDIRECTS} redirects`);
+    await response.body?.cancel();
     current = validateHttpUrl(new URL(location, current).toString());
   }
 

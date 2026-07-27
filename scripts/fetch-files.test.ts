@@ -33,6 +33,10 @@ test("parses a compact JSON array", () => {
   );
 });
 
+test("rejects an empty JSON array", () => {
+  assert.throws(() => parseFileSpec("[]"), /No download entries/);
+});
+
 test("rejects unsupported protocols and traversal", () => {
   assert.throws(() => parseFileSpec("file:///etc/passwd"), /only HTTP/);
   assert.throws(() => sanitizeRelativePath("../escape"), /unsafe path segment/);
@@ -41,6 +45,7 @@ test("rejects unsupported protocols and traversal", () => {
 
 test("derives filenames from content disposition and URL", () => {
   assert.equal(deriveFilename("https://example.com/ignored", 'attachment; filename="hello world.zip"', 0), "hello world.zip");
+  assert.equal(deriveFilename("https://example.com/ignored", 'attachment; filename="nested/server.bin"', 0), "server.bin");
   assert.equal(deriveFilename("https://example.com/path/model.glb?download=1", null, 0), "model.glb");
   assert.equal(deriveFilename("https://example.com/", null, 4), "download-005.bin");
 });
