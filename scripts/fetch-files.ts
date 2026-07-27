@@ -40,6 +40,10 @@ interface Config {
 const DEFAULT_USER_AGENT = "github-artifact-fetcher/1.0";
 const MAX_REDIRECTS = 10;
 
+class PermanentDownloadError extends Error {
+  override name = "PermanentDownloadError";
+}
+
 export function parseFileSpec(spec: string): DownloadEntry[] {
   const trimmedSpec = spec.trim();
   if (trimmedSpec.startsWith("[")) {
@@ -296,13 +300,13 @@ async function downloadEntry(entry: DownloadEntry, index: number, config: Config
           await sleep(retryDelayMs(attempt, response.headers.get("retry-after")));
           continue;
         }
-        throw new Error(message);
+        throw new PermanentDownloadError(message);
       }
       if (!response.body) throw new Error("Response contained no body");
 
       const contentLength = parseContentLength(response.headers.get("content-length"));
       if (contentLength !== undefined && contentLength > config.maxFileSizeBytes) {
-        throw new Error(`Content-Length ${contentLength} exceeds limit ${config.maxFileSizeBytes}`);
+        throw new PermanentDownloadError(`Content-Length ${contentLength} exceeds limit ${config.maxFileSizeBytes}`);
       }
 
       const initialName = entry.name ?? deriveFilename(response.url || entry.url, response.headers.get("content-disposition"), index);
@@ -318,7 +322,7 @@ async function downloadEntry(entry: DownloadEntry, index: number, config: Config
         transform(chunk: Buffer, _encoding, callback) {
           bytes += chunk.length;
           if (bytes > config.maxFileSizeBytes) {
-            callback(new Error(`Downloaded data exceeds limit ${config.maxFileSizeBytes} bytes`));
+            callback(new PermanentDownloadError(`Downloaded data exceeds limit ${config.maxFileSizeBytes} bytes`));
             return;
           }
           hash.update(chunk);
@@ -329,7 +333,7 @@ async function downloadEntry(entry: DownloadEntry, index: number, config: Config
       await pipeline(Readable.fromWeb(response.body as never), meter, createWriteStream(partPath, { flags: "wx" }));
       const digest = hash.digest("hex");
       if (entry.sha256 && digest !== entry.sha256) {
-        throw new Error(`SHA-256 mismatch: expected ${entry.sha256}, received ${digest}`);
+        throw new PermanentDownloadError(`SHA-256 mismatch: expected ${entry.sha256}, received ${digest}`);
       }
       await rename(partPath, outputPath);
       partPath = undefined;
@@ -349,7 +353,7 @@ async function downloadEntry(entry: DownloadEntry, index: number, config: Config
     } catch (error) {
       lastError = errorMessage(error);
       if (partPath) await rm(partPath, { force: true }).catch(() => undefined);
-      if (attempt <= config.retries && !/SHA-256 mismatch|exceeds limit|only HTTP|Output name/.test(lastError)) {
+      if (attempt <= config.retries && !(error instanceof PermanentDownloadError)) {
         console.warn(`Retrying ${entry.url} after attempt ${attempt}: ${lastError}`);
         await sleep(retryDelayMs(attempt, null));
         continue;

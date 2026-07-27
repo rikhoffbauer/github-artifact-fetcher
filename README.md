@@ -44,7 +44,7 @@ Blank lines and lines beginning with `#` are ignored. Duplicate output names are
 
 This mode is designed for tools that can create GitHub issues and download Actions artifacts but cannot dispatch workflows directly.
 
-Create an issue whose title begins with:
+Use the included **Fetch files as artifact** issue form, or create an issue whose title begins with:
 
 ```text
 [fetch-files]

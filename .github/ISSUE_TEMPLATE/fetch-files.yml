@@ -1,0 +1,20 @@
+name: Fetch files as artifact
+description: Download HTTP(S) files on a GitHub runner and publish them as an Actions artifact.
+title: "[fetch-files] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Enter one item per line as a URL, `name :: URL`, or a JSON object with `url`, optional `name`, and optional `sha256`.
+  - type: textarea
+    id: files
+    attributes:
+      label: Files
+      description: Credentials must not be placed here. Use the DOWNLOAD_HEADERS_JSON repository secret.
+      placeholder: |
+        model.glb :: https://example.com/model.glb
+        https://example.com/textures.zip
+      render: text
+    validations:
+      required: true
