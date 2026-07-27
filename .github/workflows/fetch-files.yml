@@ -1,0 +1,171 @@
+name: Fetch files as artifact
+
+run-name: >-
+  Fetch files → ${{ inputs.artifact_name || format('issue-{0}', github.event.issue.number) || 'downloaded-files' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      files:
+        description: >-
+          One entry per line: URL, "name :: URL", or a JSON object with url/name/sha256.
+        required: true
+        type: string
+      artifact_name:
+        description: Artifact name
+        required: false
+        default: downloaded-files
+        type: string
+      concurrency:
+        description: Simultaneous downloads
+        required: false
+        default: '4'
+        type: choice
+        options: ['1', '2', '4', '8', '12']
+      retries:
+        description: Retry count per file
+        required: false
+        default: '3'
+        type: choice
+        options: ['0', '1', '2', '3', '5']
+      request_timeout_seconds:
+        description: Timeout per HTTP attempt
+        required: false
+        default: '600'
+        type: string
+      max_file_size_mb:
+        description: Maximum size of each file
+        required: false
+        default: '4096'
+        type: string
+      fail_fast:
+        description: Stop scheduling new downloads after the first failure
+        required: false
+        default: true
+        type: boolean
+      compression_level:
+        description: Artifact ZIP compression (0 is fastest for archives/media)
+        required: false
+        default: '0'
+        type: choice
+        options: ['0', '3', '6', '9']
+      retention_days:
+        description: Artifact retention
+        required: false
+        default: '7'
+        type: choice
+        options: ['1', '3', '7', '14', '30', '90']
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  fetch:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (startsWith(github.event.issue.title, '[fetch-files]') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Check out downloader
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Download files
+        id: download
+        env:
+          DOWNLOAD_FILE_SPEC: ${{ inputs.files || github.event.issue.body }}
+          DOWNLOAD_ARTIFACT_NAME: ${{ inputs.artifact_name || format('download-issue-{0}', github.event.issue.number) }}
+          DOWNLOAD_CONCURRENCY: ${{ inputs.concurrency }}
+          DOWNLOAD_RETRIES: ${{ inputs.retries }}
+          DOWNLOAD_REQUEST_TIMEOUT_SECONDS: ${{ inputs.request_timeout_seconds }}
+          DOWNLOAD_MAX_FILE_SIZE_MB: ${{ inputs.max_file_size_mb }}
+          DOWNLOAD_FAIL_FAST: ${{ inputs.fail_fast }}
+          # Optional repository secret. JSON object keyed by exact hostname:
+          # {"example.com":{"Authorization":"Bearer ..."}}
+          DOWNLOAD_HEADERS_JSON: ${{ secrets.DOWNLOAD_HEADERS_JSON }}
+        run: bun scripts/fetch-files.ts
+
+      - name: Upload workflow artifact
+        id: upload
+        if: ${{ always() && steps.download.outputs.has_output == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.download.outputs.artifact_name }}
+          path: .download-output/
+          if-no-files-found: error
+          include-hidden-files: true
+          compression-level: ${{ inputs.compression_level || '0' }}
+          retention-days: ${{ inputs.retention_days || '7' }}
+
+      - name: Report artifact on request issue
+        if: ${{ always() && github.event_name == 'issues' }}
+        uses: actions/github-script@v7
+        env:
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+          ARTIFACT_NAME: ${{ steps.download.outputs.artifact_name }}
+          SUCCESS_COUNT: ${{ steps.download.outputs.success_count || '0' }}
+          FAILURE_COUNT: ${{ steps.download.outputs.failure_count || '0' }}
+        with:
+          script: |
+            const artifactId = process.env.ARTIFACT_ID || "";
+            const artifactUrl = process.env.ARTIFACT_URL || "";
+            const successCount = process.env.SUCCESS_COUNT || "0";
+            const failureCount = process.env.FAILURE_COUNT || "0";
+            const lines = [
+              "Fetch completed.",
+              "",
+              `- Successful files: ${successCount}`,
+              `- Failed files: ${failureCount}`,
+              `- Workflow run ID: ${context.runId}`,
+            ];
+            if (artifactId) {
+              lines.push(`- Artifact name: ${process.env.ARTIFACT_NAME}`);
+              lines.push(`- Artifact ID: ${artifactId}`);
+              lines.push(`- Artifact digest: \`${process.env.ARTIFACT_DIGEST}\``);
+              lines.push(`- Artifact: [download from GitHub](${artifactUrl})`);
+            } else {
+              lines.push("- Artifact: not created");
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: lines.join("\n"),
+            });
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              state: "closed",
+            });
+
+      - name: Publish summary
+        if: always()
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: |
+          {
+            echo '## File fetch result'
+            echo
+            if [[ -n "${ARTIFACT_URL:-}" ]]; then
+              echo "- Artifact: [${{ steps.download.outputs.artifact_name }}](${ARTIFACT_URL})"
+              echo "- Artifact digest: \`${ARTIFACT_DIGEST}\`"
+            else
+              echo '- No artifact was uploaded.'
+            fi
+            echo "- Successful files: ${{ steps.download.outputs.success_count || '0' }}"
+            echo "- Failed files: ${{ steps.download.outputs.failure_count || '0' }}"
+          } >> "$GITHUB_STEP_SUMMARY"
