@@ -1,6 +1,6 @@
 # GitHub Artifact Fetcher
 
-A manually triggered GitHub Actions workflow that downloads public or authenticated HTTP(S) files on a GitHub-hosted runner and publishes them as a workflow artifact.
+A GitHub Actions workflow that downloads public or authenticated HTTP(S) files on a GitHub-hosted runner and publishes them as a workflow artifact. It supports manual dispatch and trusted issue-based requests for connector clients.
 
 The artifact contains the downloaded files plus:
 
@@ -145,6 +145,7 @@ Headers are selected again after every redirect and are only sent to the exact m
 - A failed run still uploads its successful files and `manifest.json` because the upload step uses `always()`.
 - `fail_fast=true` stops scheduling new files after a failure; already-running downloads finish.
 - GitHub artifacts are ZIP archives. Compression level `0` is recommended for GLB, ZIP, images, videos, and other already-compressed files.
+- The downloader runs directly as TypeScript on Node.js 24 and has no runtime package dependencies.
 
 ## Security model
 

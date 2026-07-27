@@ -2,7 +2,7 @@
 
 ## Scope
 
-This repository contains a dependency-free TypeScript downloader and a GitHub Actions workflow that exposes it through `workflow_dispatch`.
+This repository contains a dependency-free TypeScript downloader and a GitHub Actions workflow that exposes it through `workflow_dispatch` and trusted issue creation.
 
 ## Invariants
 

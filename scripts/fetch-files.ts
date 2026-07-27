@@ -286,8 +286,9 @@ async function downloadEntry(entry: DownloadEntry, index: number, config: Config
         const message = `HTTP ${response.status} ${response.statusText}`;
         if (retryableStatus(response.status) && attempt <= config.retries) {
           await response.body?.cancel();
-          await sleep(retryDelayMs(attempt, response.headers.get("retry-after")));
           lastError = message;
+          console.warn(`Retrying ${entry.url} after attempt ${attempt}: ${lastError}`);
+          await sleep(retryDelayMs(attempt, response.headers.get("retry-after")));
           continue;
         }
         throw new Error(message);
@@ -344,6 +345,7 @@ async function downloadEntry(entry: DownloadEntry, index: number, config: Config
       lastError = errorMessage(error);
       if (partPath) await rm(partPath, { force: true }).catch(() => undefined);
       if (attempt <= config.retries && !/SHA-256 mismatch|exceeds limit|only HTTP|Output name/.test(lastError)) {
+        console.warn(`Retrying ${entry.url} after attempt ${attempt}: ${lastError}`);
         await sleep(retryDelayMs(attempt, null));
         continue;
       }
