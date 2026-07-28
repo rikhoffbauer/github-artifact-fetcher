@@ -56,7 +56,8 @@ jobs:
         run: |
           bun run db:extensions
           bun run db:migrate
-      - name: Run complete validation
+          bun run db:invariants
+      - name: Run lint, typecheck, and tests
         working-directory: project
         env:
           DATABASE_URL: postgresql://prototype:prototype@localhost:5432/prototype
@@ -75,7 +76,10 @@ jobs:
           PIPELINE_ENCRYPTION_KEY_VERSION: 1
           ALLOW_PRIVATE_NETWORKS: true
           SCRAPER_USER_AGENT: ScraperStudio-CI/1.0
-        run: bun run check
+        run: |
+          bun run lint
+          bun run typecheck
+          bun run test
       - name: Build applications
         working-directory: project
         run: bun run build
