@@ -1,0 +1,88 @@
+name: Scraper Studio full runtime validation
+
+on:
+  push:
+    branches:
+      - validation/scraper-studio-full-runtime-20260728
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: PostgreSQL ${{ matrix.postgres }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["16", "18"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}-alpine
+        env:
+          POSTGRES_USER: prototype
+          POSTGRES_PASSWORD: prototype
+          POSTGRES_DB: prototype
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U prototype -d prototype"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      DATABASE_URL: postgresql://prototype:prototype@localhost:5432/prototype
+      AUTH_SECRET: ci-secret-that-is-at-least-thirty-two-characters
+      SCRAPER_SECRETS_KEY: ci-scraper-secrets-key-that-is-at-least-thirty-two-characters
+      SMTP_FROM: Prototype CI <no-reply@example.test>
+      S3_ENDPOINT: http://localhost:3900
+      S3_ACCESS_KEY_ID: ci
+      S3_SECRET_ACCESS_KEY: ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-ci
+      S3_PRIVATE_BUCKET: private
+      S3_PUBLIC_BUCKET: public
+      SCRAPER_ALLOW_PRIVATE_NETWORKS: "true"
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Download exact source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 4 --retry-all-errors \
+            'https://drive.usercontent.google.com/download?id=1VsGiy75g4sgdJaPuyxWf5UMImsLoiEA0&export=download&confirm=t' \
+            --output "$RUNNER_TEMP/scraper-studio.zip"
+          echo '8c58456a1b10049b4273ac5d6deb406cd86cdc95a1439e3b94592dc1e00aadfd  '"$RUNNER_TEMP/scraper-studio.zip" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/source"
+          unzip -q "$RUNNER_TEMP/scraper-studio.zip" -d "$RUNNER_TEMP/source"
+          test -f "$RUNNER_TEMP/source/scraper-studio/package.json"
+      - name: Install frozen dependencies
+        working-directory: ${{ runner.temp }}/source/scraper-studio
+        run: bun install --frozen-lockfile
+      - name: Install Playwright Chromium
+        working-directory: ${{ runner.temp }}/source/scraper-studio
+        run: bunx playwright install --with-deps chromium
+      - name: Configure database extensions
+        working-directory: ${{ runner.temp }}/source/scraper-studio
+        run: bun run db:extensions
+      - name: Apply committed migrations
+        working-directory: ${{ runner.temp }}/source/scraper-studio
+        run: bun run db:migrate
+      - name: Run repository checks
+        working-directory: ${{ runner.temp }}/source/scraper-studio
+        run: bun run check
+      - name: Build applications
+        working-directory: ${{ runner.temp }}/source/scraper-studio
+        run: bun run build
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraper-studio-runtime-postgres-${{ matrix.postgres }}
+          path: |
+            ${{ runner.temp }}/source/scraper-studio
+          retention-days: 1
+          compression-level: 0
