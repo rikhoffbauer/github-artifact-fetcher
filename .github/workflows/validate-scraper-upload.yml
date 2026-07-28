@@ -1,0 +1,81 @@
+name: Validate uploaded scraper repository
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  validate:
+    if: startsWith(github.event.issue.title, '[validate-scraper]') && github.event.comment.body == 'RUN_VALIDATION'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: prototype
+          POSTGRES_PASSWORD: prototype
+          POSTGRES_DB: prototype
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U prototype -d prototype"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - name: Reconstruct source archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          gh api --paginate "repos/$REPOSITORY/issues/$ISSUE_NUMBER/comments" \
+            --jq '.[] | select(.body | startswith("CHUNK ")) | .body' \
+            | sort > chunks.txt
+          sed -E 's/^CHUNK [0-9]+://' chunks.txt | tr -d '\n' | base64 -d > source.tar.xz
+          mkdir project
+          tar -xJf source.tar.xz -C project
+          test -f project/package.json
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install dependencies
+        working-directory: project
+        run: bun install
+      - name: Install Chromium
+        working-directory: project
+        run: bunx playwright install --with-deps chromium
+      - name: Prepare database
+        working-directory: project
+        env:
+          DATABASE_URL: postgresql://prototype:prototype@localhost:5432/prototype
+        run: |
+          bun run db:extensions
+          bun run db:migrate
+      - name: Run complete validation
+        working-directory: project
+        env:
+          DATABASE_URL: postgresql://prototype:prototype@localhost:5432/prototype
+          AUTH_SECRET: ci-secret-that-is-at-least-thirty-two-characters
+          SMTP_FROM: Prototype CI <no-reply@example.test>
+          S3_ENDPOINT: http://localhost:3900
+          S3_ACCESS_KEY_ID: ci
+          S3_SECRET_ACCESS_KEY: ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-ci
+          S3_PRIVATE_BUCKET: private
+          S3_PUBLIC_BUCKET: public
+          OPENAI_API_KEY: test-openai-key
+          OPENAI_BASE_URL: http://127.0.0.1:9/v1
+          OPENAI_ASSISTANT_MODEL: test-assistant
+          OPENAI_EVENT_MODEL: test-event
+          PIPELINE_ENCRYPTION_KEYS: '{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}'
+          PIPELINE_ENCRYPTION_KEY_VERSION: 1
+          ALLOW_PRIVATE_NETWORKS: true
+          SCRAPER_USER_AGENT: ScraperStudio-CI/1.0
+        run: bun run check
+      - name: Build applications
+        working-directory: project
+        run: bun run build
