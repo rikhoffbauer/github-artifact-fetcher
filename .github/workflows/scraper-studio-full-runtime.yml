@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - validation/scraper-studio-full-runtime-20260728
+  pull_request:
 
 permissions:
   contents: read
@@ -77,12 +78,11 @@ jobs:
       - name: Build applications
         working-directory: ${{ runner.temp }}/source/scraper-studio
         run: bun run build
-      - name: Upload validation logs
+      - name: Upload validation workspace
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: scraper-studio-runtime-postgres-${{ matrix.postgres }}
-          path: |
-            ${{ runner.temp }}/source/scraper-studio
+          path: ${{ runner.temp }}/source/scraper-studio
           retention-days: 1
           compression-level: 0
