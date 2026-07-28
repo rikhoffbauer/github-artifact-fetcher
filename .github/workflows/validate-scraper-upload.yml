@@ -33,10 +33,14 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           REPOSITORY: ${{ github.repository }}
         run: |
+          set -euo pipefail
           gh api --paginate "repos/$REPOSITORY/issues/$ISSUE_NUMBER/comments" \
             --jq '.[] | select(.body | startswith("CHUNK ")) | .body' \
             | sort > chunks.txt
+          expected_sha="$(gh api --paginate "repos/$REPOSITORY/issues/$ISSUE_NUMBER/comments" --jq '.[] | select(.body | startswith("SHA256 ")) | .body' | tail -1 | cut -d' ' -f2)"
+          test -n "$expected_sha"
           sed -E 's/^CHUNK [0-9]+://' chunks.txt | tr -d '\n' | base64 -d > source.tar.xz
+          echo "$expected_sha  source.tar.xz" | sha256sum -c -
           mkdir project
           tar -xJf source.tar.xz -C project
           test -f project/package.json
