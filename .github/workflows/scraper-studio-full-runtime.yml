@@ -50,15 +50,21 @@ jobs:
         with:
           bun-version: 1.3.14
       - name: Download exact source archive
+        env:
+          DOWNLOAD_FILE_SPEC: >-
+            [{"url":"https://drive.usercontent.google.com/download?id=1VsGiy75g4sgdJaPuyxWf5UMImsLoiEA0&export=download&confirm=t","name":"scraper-studio-full-validation.zip","sha256":"8c58456a1b10049b4273ac5d6deb406cd86cdc95a1439e3b94592dc1e00aadfd"}]
+          DOWNLOAD_ARTIFACT_NAME: scraper-studio-source
+          DOWNLOAD_CONCURRENCY: "1"
+          DOWNLOAD_RETRIES: "4"
+          DOWNLOAD_REQUEST_TIMEOUT_SECONDS: "600"
+          DOWNLOAD_MAX_FILE_SIZE_MB: "128"
+          DOWNLOAD_FAIL_FAST: "true"
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --retry 4 --retry-all-errors \
-            'https://drive.usercontent.google.com/download?id=1VsGiy75g4sgdJaPuyxWf5UMImsLoiEA0&export=download&confirm=t' \
-            --output "$RUNNER_TEMP/scraper-studio.zip"
-          echo '8c58456a1b10049b4273ac5d6deb406cd86cdc95a1439e3b94592dc1e00aadfd  '"$RUNNER_TEMP/scraper-studio.zip" | sha256sum -c -
+          node scripts/fetch-files.ts
           mkdir -p "$RUNNER_TEMP/source"
-          unzip -q "$RUNNER_TEMP/scraper-studio.zip" -d "$RUNNER_TEMP/source"
+          unzip -q .download-output/scraper-studio-full-validation.zip -d "$RUNNER_TEMP/source"
           test -f "$RUNNER_TEMP/source/scraper-studio/package.json"
       - name: Install frozen dependencies
         working-directory: ${{ runner.temp }}/source/scraper-studio
