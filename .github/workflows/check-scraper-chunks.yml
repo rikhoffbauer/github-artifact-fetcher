@@ -20,6 +20,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          indices="$(gh api --paginate "repos/$REPOSITORY/issues/$ISSUE_NUMBER/comments" --jq '.[] | select(.body | startswith("CHUNK ")) | .body[6:9]' | sort | tr '\n' ' ')"
-          count="$(wc -w <<<"$indices" | tr -d ' ')"
-          gh issue comment "$ISSUE_NUMBER" --repo "$REPOSITORY" --body "CHUNK_STATUS count=$count indices=$indices"
+          indices="$(gh api --paginate "repos/$REPOSITORY/issues/$ISSUE_NUMBER/comments" --jq '.[] | select(.body | startswith("CHUNK ")) | .body[6:9]' | sort | tr '\n' ',')"
+          indices="${indices%,}"
+          count="$(tr ',' ' ' <<<"$indices" | wc -w | tr -d ' ')"
+          gh issue edit "$ISSUE_NUMBER" --repo "$REPOSITORY" --title "[validate-scraper] chunks=$count [$indices]"
