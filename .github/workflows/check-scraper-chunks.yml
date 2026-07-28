@@ -1,0 +1,25 @@
+name: Check scraper validation chunks
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    if: startsWith(github.event.issue.title, '[validate-scraper]') && github.event.comment.body == 'CHECK_CHUNKS'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report uploaded chunk indices
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          indices="$(gh api --paginate "repos/$REPOSITORY/issues/$ISSUE_NUMBER/comments" --jq '.[] | select(.body | startswith("CHUNK ")) | .body[6:9]' | sort | tr '\n' ' ')"
+          count="$(wc -w <<<"$indices" | tr -d ' ')"
+          gh issue comment "$ISSUE_NUMBER" --repo "$REPOSITORY" --body "CHUNK_STATUS count=$count indices=$indices"
