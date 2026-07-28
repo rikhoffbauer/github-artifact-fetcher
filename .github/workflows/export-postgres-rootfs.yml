@@ -1,0 +1,42 @@
+name: Export PostgreSQL runtimes
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/export-postgres-rootfs.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    name: PostgreSQL ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["16", "18"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export official Debian image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="postgres:${{ matrix.version }}-bookworm"
+          docker pull "$image"
+          container="$(docker create "$image")"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          docker export "$container" | gzip -1 > "/tmp/postgres-${{ matrix.version }}-bookworm-rootfs.tar.gz"
+          sha256sum "/tmp/postgres-${{ matrix.version }}-bookworm-rootfs.tar.gz" > "/tmp/postgres-${{ matrix.version }}-bookworm-rootfs.SHA256SUMS"
+          gzip -t "/tmp/postgres-${{ matrix.version }}-bookworm-rootfs.tar.gz"
+          du -h "/tmp/postgres-${{ matrix.version }}-bookworm-rootfs.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: postgres-${{ matrix.version }}-bookworm-rootfs
+          path: |
+            /tmp/postgres-${{ matrix.version }}-bookworm-rootfs.tar.gz
+            /tmp/postgres-${{ matrix.version }}-bookworm-rootfs.SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
