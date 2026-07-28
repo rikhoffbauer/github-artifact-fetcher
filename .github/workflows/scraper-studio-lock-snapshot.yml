@@ -64,17 +64,21 @@ jobs:
           tar --null --files-from=/tmp/node-modules.list --create --gzip --file=/tmp/scraper-studio-node-modules.tar.gz
           sha256sum /tmp/scraper-studio-node-modules.tar.gz > /tmp/node-modules.SHA256SUMS
           du -h /tmp/scraper-studio-node-modules.tar.gz
+          df -h /tmp
 
       - name: Assemble artifacts
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/artifacts/migrations/meta
+          ls -lh /tmp/scraper-studio-node-modules.tar.gz /tmp/node-modules.SHA256SUMS /tmp/scraper-studio/bun.lock /tmp/scraper-studio/migrations/meta/0000_snapshot.json
+          mv /tmp/scraper-studio-node-modules.tar.gz /tmp/artifacts/
+          mv /tmp/node-modules.SHA256SUMS /tmp/artifacts/
           cp /tmp/scraper-studio/bun.lock /tmp/artifacts/
           cp /tmp/scraper-studio/migrations/meta/0000_snapshot.json /tmp/artifacts/migrations/meta/
           cp /tmp/generate-snapshot.log /tmp/drift-check.log /tmp/artifacts/
-          cp /tmp/scraper-studio-node-modules.tar.gz /tmp/node-modules.SHA256SUMS /tmp/artifacts/
           sha256sum /tmp/artifacts/bun.lock /tmp/artifacts/migrations/meta/0000_snapshot.json > /tmp/artifacts/SHA256SUMS
+          du -sh /tmp/artifacts
 
       - uses: actions/upload-artifact@v4
         with:
