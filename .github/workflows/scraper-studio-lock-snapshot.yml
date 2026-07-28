@@ -1,4 +1,4 @@
-name: Scraper Studio lock and snapshot
+name: Scraper Studio lock, snapshot, and dependencies
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ permissions:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -31,7 +31,7 @@ jobs:
 
       - name: Resolve dependencies
         working-directory: /tmp/scraper-studio
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Generate baseline snapshot and verify drift
         working-directory: /tmp/scraper-studio
@@ -54,6 +54,17 @@ jobs:
           after="$(find migrations -maxdepth 1 -name '*.sql' -type f | sort | tr '\n' ' ')"
           test "$before" = "$after"
 
+      - name: Archive resolved dependencies
+        working-directory: /tmp/scraper-studio
+        shell: bash
+        run: |
+          set -euo pipefail
+          find . -type d -name node_modules -prune -print0 > /tmp/node-modules.list
+          test -s /tmp/node-modules.list
+          tar --null --files-from=/tmp/node-modules.list --create --gzip --file=/tmp/scraper-studio-node-modules.tar.gz
+          sha256sum /tmp/scraper-studio-node-modules.tar.gz > /tmp/node-modules.SHA256SUMS
+          du -h /tmp/scraper-studio-node-modules.tar.gz
+
       - name: Assemble artifacts
         shell: bash
         run: |
@@ -62,11 +73,13 @@ jobs:
           cp /tmp/scraper-studio/bun.lock /tmp/artifacts/
           cp /tmp/scraper-studio/migrations/meta/0000_snapshot.json /tmp/artifacts/migrations/meta/
           cp /tmp/generate-snapshot.log /tmp/drift-check.log /tmp/artifacts/
+          cp /tmp/scraper-studio-node-modules.tar.gz /tmp/node-modules.SHA256SUMS /tmp/artifacts/
           sha256sum /tmp/artifacts/bun.lock /tmp/artifacts/migrations/meta/0000_snapshot.json > /tmp/artifacts/SHA256SUMS
 
       - uses: actions/upload-artifact@v4
         with:
-          name: scraper-studio-lock-snapshot
+          name: scraper-studio-dependencies
           path: /tmp/artifacts
           if-no-files-found: error
           retention-days: 1
+          compression-level: 0
