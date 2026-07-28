@@ -1,4 +1,4 @@
-name: Scraper Studio lock, snapshot, and dependencies
+name: Scraper Studio lock, snapshot, dependencies, and browser
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ permissions:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -32,6 +32,10 @@ jobs:
       - name: Resolve dependencies
         working-directory: /tmp/scraper-studio
         run: bun install --frozen-lockfile
+
+      - name: Install pinned Playwright Chromium
+        working-directory: /tmp/scraper-studio
+        run: bunx playwright install chromium
 
       - name: Generate baseline snapshot and verify drift
         working-directory: /tmp/scraper-studio
@@ -54,7 +58,7 @@ jobs:
           after="$(find migrations -maxdepth 1 -name '*.sql' -type f | sort | tr '\n' ' ')"
           test "$before" = "$after"
 
-      - name: Archive resolved dependencies
+      - name: Archive resolved dependencies and browser
         working-directory: /tmp/scraper-studio
         shell: bash
         run: |
@@ -63,16 +67,21 @@ jobs:
           test -s /tmp/node-modules.list
           tar --null --files-from=/tmp/node-modules.list --create --gzip --file=/tmp/scraper-studio-node-modules.tar.gz
           sha256sum /tmp/scraper-studio-node-modules.tar.gz > /tmp/node-modules.SHA256SUMS
-          du -h /tmp/scraper-studio-node-modules.tar.gz
+          test -d "$HOME/.cache/ms-playwright"
+          tar -C "$HOME/.cache" --create --gzip --file=/tmp/ms-playwright.tar.gz ms-playwright
+          sha256sum /tmp/ms-playwright.tar.gz > /tmp/ms-playwright.SHA256SUMS
+          du -h /tmp/scraper-studio-node-modules.tar.gz /tmp/ms-playwright.tar.gz
           df -h /tmp
 
-      - name: Upload resolved dependency graph
+      - name: Upload resolved runtime graph
         uses: actions/upload-artifact@v4
         with:
-          name: scraper-studio-dependencies
+          name: scraper-studio-runtime-dependencies
           path: |
             /tmp/scraper-studio-node-modules.tar.gz
             /tmp/node-modules.SHA256SUMS
+            /tmp/ms-playwright.tar.gz
+            /tmp/ms-playwright.SHA256SUMS
             /tmp/scraper-studio/bun.lock
             /tmp/scraper-studio/migrations/meta/0000_snapshot.json
             /tmp/generate-snapshot.log
