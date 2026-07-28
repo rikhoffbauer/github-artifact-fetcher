@@ -1,0 +1,72 @@
+name: Scraper Studio lock and snapshot
+
+on:
+  pull_request:
+    paths:
+      - "validation/scraper-studio/**"
+      - ".github/workflows/scraper-studio-lock-snapshot.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/scraper-studio
+          base64 --decode validation/scraper-studio/lock-snapshot-source.b64 > /tmp/source.tar.xz
+          echo "77c4e8cf213105bd841b15ae0ec27d07d0f0ed4cd9a7eb03ea9c9be2b8fca85a  /tmp/source.tar.xz" | sha256sum --check
+          tar -xJf /tmp/source.tar.xz -C /tmp/scraper-studio
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Resolve dependencies
+        working-directory: /tmp/scraper-studio
+        run: bun install
+
+      - name: Generate baseline snapshot and verify drift
+        working-directory: /tmp/scraper-studio
+        shell: bash
+        env:
+          DATABASE_URL: postgresql://prototype:prototype@localhost:5432/prototype
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('drizzle.config.ts').read_text()
+          Path('drizzle.snapshot.config.ts').write_text(source.replace('out: "./migrations"', 'out: "./generated-migrations"'))
+          PY
+          bunx drizzle-kit generate --config=drizzle.snapshot.config.ts --name baseline_snapshot | tee /tmp/generate-snapshot.log
+          snapshot="$(find generated-migrations/meta -name '*_snapshot.json' -type f | sort | head -1)"
+          test -n "$snapshot"
+          cp "$snapshot" migrations/meta/0000_snapshot.json
+          before="$(find migrations -maxdepth 1 -name '*.sql' -type f | sort | tr '\n' ' ')"
+          bunx drizzle-kit generate --name drift_check | tee /tmp/drift-check.log
+          after="$(find migrations -maxdepth 1 -name '*.sql' -type f | sort | tr '\n' ' ')"
+          test "$before" = "$after"
+
+      - name: Assemble artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/artifacts/migrations/meta
+          cp /tmp/scraper-studio/bun.lock /tmp/artifacts/
+          cp /tmp/scraper-studio/migrations/meta/0000_snapshot.json /tmp/artifacts/migrations/meta/
+          cp /tmp/generate-snapshot.log /tmp/drift-check.log /tmp/artifacts/
+          sha256sum /tmp/artifacts/bun.lock /tmp/artifacts/migrations/meta/0000_snapshot.json > /tmp/artifacts/SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scraper-studio-lock-snapshot
+          path: /tmp/artifacts
+          if-no-files-found: error
+          retention-days: 1
