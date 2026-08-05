@@ -1,0 +1,88 @@
+name: Fetch GitHub blobs as artifact
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  fetch:
+    if: >-
+      startsWith(github.event.issue.title, '[fetch-github-blobs]') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch exact Git blobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BLOB_SPEC: ${{ github.event.issue.body }}
+        run: |
+          mkdir -p .download-output
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const lines = process.env.BLOB_SPEC.split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter((line) => line && !line.startsWith('#'));
+          if (lines.length === 0) throw new Error('No blob entries provided');
+
+          async function main() {
+            for (const [index, line] of lines.entries()) {
+              const match = line.match(/^([^\s]+\/[^\s]+)\s+([a-f0-9]{40})\s+(.+)$/i);
+              if (!match) throw new Error(`Invalid line ${index + 1}; expected: owner/repo sha output-name`);
+              const [, repo, sha, outputName] = match;
+              if (outputName.includes('..') || path.isAbsolute(outputName)) throw new Error(`Unsafe output name: ${outputName}`);
+              const response = await fetch(`https://api.github.com/repos/${repo}/git/blobs/${sha}`, {
+                headers: {
+                  Accept: 'application/vnd.github+json',
+                  Authorization: `Bearer ${process.env.GH_TOKEN}`,
+                  'X-GitHub-Api-Version': '2022-11-28',
+                  'User-Agent': 'github-artifact-fetcher/blob-transfer',
+                },
+              });
+              if (!response.ok) throw new Error(`${repo}@${sha}: HTTP ${response.status} ${await response.text()}`);
+              const blob = await response.json();
+              if (blob.encoding !== 'base64' || typeof blob.content !== 'string') throw new Error(`${repo}@${sha}: unsupported blob response`);
+              const data = Buffer.from(blob.content.replace(/\s/g, ''), 'base64');
+              if (data.length !== blob.size) throw new Error(`${repo}@${sha}: decoded ${data.length} bytes, expected ${blob.size}`);
+              const target = path.join('.download-output', outputName);
+              fs.mkdirSync(path.dirname(target), { recursive: true });
+              fs.writeFileSync(target, data);
+            }
+          }
+          main().catch((error) => { console.error(error); process.exitCode = 1; });
+          NODE
+
+      - name: Upload artifact
+        id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: github-blobs-${{ github.event.issue.number }}
+          path: .download-output/
+          if-no-files-found: error
+          compression-level: '0'
+          retention-days: '7'
+
+      - name: Report and close
+        if: always()
+        uses: actions/github-script@v9
+        env:
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        with:
+          script: |
+            const lines = [
+              'GitHub blob fetch completed.',
+              '',
+              `- Workflow run ID: ${context.runId}`,
+              `- Artifact ID: ${process.env.ARTIFACT_ID || 'not created'}`,
+              `- Artifact digest: \`${process.env.ARTIFACT_DIGEST || 'n/a'}\``,
+            ];
+            if (process.env.ARTIFACT_URL) lines.push(`- Artifact: [download from GitHub](${process.env.ARTIFACT_URL})`);
+            await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body: lines.join('\n') });
+            await github.rest.issues.update({ ...context.repo, issue_number: context.issue.number, state: 'closed' });
