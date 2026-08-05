@@ -19,12 +19,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BLOB_SPEC: ${{ github.event.issue.body }}
+          OUTPUT_DIR: ${{ runner.temp }}/github-blobs
         run: |
-          mkdir -p .download-output
+          rm -rf "$OUTPUT_DIR"
+          mkdir -p "$OUTPUT_DIR"
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
           import path from 'node:path';
 
+          const outputDir = process.env.OUTPUT_DIR;
           const lines = process.env.BLOB_SPEC.split(/\r?\n/)
             .map((line) => line.trim())
             .filter((line) => line && !line.startsWith('#'));
@@ -48,18 +51,19 @@ jobs:
             if (blob.encoding !== 'base64' || typeof blob.content !== 'string') throw new Error(`${repo}@${sha}: unsupported blob response`);
             const data = Buffer.from(blob.content.replace(/\s/g, ''), 'base64');
             if (data.length !== blob.size) throw new Error(`${repo}@${sha}: decoded ${data.length} bytes, expected ${blob.size}`);
-            const target = path.join('.download-output', outputName);
+            const target = path.join(outputDir, outputName);
             fs.mkdirSync(path.dirname(target), { recursive: true });
             fs.writeFileSync(target, data);
           }
           NODE
+          find "$OUTPUT_DIR" -type f -printf '%P %s bytes\n'
 
       - name: Upload artifact
         id: upload
         uses: actions/upload-artifact@v7
         with:
           name: github-blobs-${{ github.event.issue.number }}
-          path: .download-output/
+          path: ${{ runner.temp }}/github-blobs/
           if-no-files-found: error
           compression-level: '0'
           retention-days: '7'
