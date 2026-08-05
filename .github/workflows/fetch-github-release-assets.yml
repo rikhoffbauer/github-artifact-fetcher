@@ -1,0 +1,89 @@
+name: Fetch GitHub release assets as artifact
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  fetch:
+    if: >-
+      startsWith(github.event.issue.title, '[fetch-github-assets]') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch exact release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET_SPEC: ${{ github.event.issue.body }}
+          OUTPUT_DIR: ${{ runner.temp }}/github-assets
+        run: |
+          rm -rf "$OUTPUT_DIR"
+          mkdir -p "$OUTPUT_DIR"
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+
+          const outputDir = process.env.OUTPUT_DIR;
+          const lines = process.env.ASSET_SPEC.split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter((line) => line && !line.startsWith('#'));
+          if (lines.length === 0) throw new Error('No asset entries provided');
+
+          for (const [index, line] of lines.entries()) {
+            const match = line.match(/^([^\s]+\/[^\s]+)\s+(\d+)\s+(.+)$/);
+            if (!match) throw new Error(`Invalid line ${index + 1}; expected: owner/repo asset-id output-name`);
+            const [, repo, assetId, outputName] = match;
+            if (outputName.includes('..') || path.isAbsolute(outputName)) throw new Error(`Unsafe output name: ${outputName}`);
+            const response = await fetch(`https://api.github.com/repos/${repo}/releases/assets/${assetId}`, {
+              headers: {
+                Accept: 'application/octet-stream',
+                Authorization: `Bearer ${process.env.GH_TOKEN}`,
+                'X-GitHub-Api-Version': '2022-11-28',
+                'User-Agent': 'github-artifact-fetcher/release-asset-transfer',
+              },
+              redirect: 'follow',
+            });
+            if (!response.ok) throw new Error(`${repo} asset ${assetId}: HTTP ${response.status} ${await response.text()}`);
+            const data = Buffer.from(await response.arrayBuffer());
+            if (data.length === 0) throw new Error(`${repo} asset ${assetId}: empty response`);
+            const target = path.join(outputDir, outputName);
+            fs.mkdirSync(path.dirname(target), { recursive: true });
+            fs.writeFileSync(target, data);
+          }
+          NODE
+          find "$OUTPUT_DIR" -type f -printf '%P %s bytes\n'
+          sha256sum "$OUTPUT_DIR"/*
+
+      - name: Upload artifact
+        id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: github-assets-${{ github.event.issue.number }}
+          path: ${{ runner.temp }}/github-assets/
+          if-no-files-found: error
+          compression-level: '0'
+          retention-days: '7'
+
+      - name: Report and close
+        if: always()
+        uses: actions/github-script@v9
+        env:
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        with:
+          script: |
+            const lines = [
+              'GitHub release asset fetch completed.',
+              '',
+              `- Workflow run ID: ${context.runId}`,
+              `- Artifact ID: ${process.env.ARTIFACT_ID || 'not created'}`,
+              `- Artifact digest: \`${process.env.ARTIFACT_DIGEST || 'n/a'}\``,
+            ];
+            if (process.env.ARTIFACT_URL) lines.push(`- Artifact: [download from GitHub](${process.env.ARTIFACT_URL})`);
+            await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body: lines.join('\n') });
+            await github.rest.issues.update({ ...context.repo, issue_number: context.issue.number, state: 'closed' });
