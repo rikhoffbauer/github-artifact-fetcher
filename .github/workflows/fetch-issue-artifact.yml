@@ -1,0 +1,90 @@
+name: Fetch issue files as artifact
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  fetch:
+    if: startsWith(github.event.issue.title, '[fetch-files]') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Check out downloader
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Download files
+        id: download
+        env:
+          DOWNLOAD_FILE_SPEC: ${{ github.event.issue.body }}
+          DOWNLOAD_ARTIFACT_NAME: download-issue-${{ github.event.issue.number }}
+          DOWNLOAD_CONCURRENCY: '4'
+          DOWNLOAD_RETRIES: '3'
+          DOWNLOAD_REQUEST_TIMEOUT_SECONDS: '600'
+          DOWNLOAD_MAX_FILE_SIZE_MB: '4096'
+          DOWNLOAD_FAIL_FAST: 'true'
+          DOWNLOAD_HEADERS_JSON: ${{ secrets.DOWNLOAD_HEADERS_JSON }}
+        run: node scripts/fetch-files.ts
+
+      - name: Upload workflow artifact
+        id: upload
+        if: always() && steps.download.outputs.has_output == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.download.outputs.artifact_name }}
+          path: .download-output/
+          if-no-files-found: error
+          include-hidden-files: true
+          compression-level: '0'
+          retention-days: '7'
+
+      - name: Report artifact
+        if: always()
+        uses: actions/github-script@v9
+        env:
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+          ARTIFACT_NAME: ${{ steps.download.outputs.artifact_name }}
+          SUCCESS_COUNT: ${{ steps.download.outputs.success_count || '0' }}
+          FAILURE_COUNT: ${{ steps.download.outputs.failure_count || '0' }}
+        with:
+          script: |
+            const artifactId = process.env.ARTIFACT_ID || "";
+            const lines = [
+              "Fetch completed.",
+              "",
+              `- Successful files: ${process.env.SUCCESS_COUNT || "0"}`,
+              `- Failed files: ${process.env.FAILURE_COUNT || "0"}`,
+              `- Workflow run ID: ${context.runId}`,
+            ];
+            if (artifactId) {
+              lines.push(`- Artifact name: ${process.env.ARTIFACT_NAME}`);
+              lines.push(`- Artifact ID: ${artifactId}`);
+              lines.push(`- Artifact digest: \`${process.env.ARTIFACT_DIGEST}\``);
+              lines.push(`- Artifact: [download from GitHub](${process.env.ARTIFACT_URL})`);
+            } else {
+              lines.push("- Artifact: not created");
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: lines.join("\n"),
+            });
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              state: "closed",
+            });
